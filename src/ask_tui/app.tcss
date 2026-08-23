@@ -1,0 +1,185 @@
+$bg: #09090b;
+/* `$surface` is supplied by AskApp.get_css_variables(), not declared here — a
+   declaration in this file would shadow it and the --opaque switch would do
+   nothing. It resolves to `ansi_default`, which emits no background code at all
+   so the terminal's own shows through (Ghostty's translucency, a blur, an
+   image), or to an opaque colour when transparency is off. */
+$fg: #e4e4e7;
+$dim: #52525b;
+$accent: #c07dff;
+$cyan: #67e8f9;
+$border: #27272a;
+
+Screen {
+    background: $surface;
+    color: $fg;
+}
+
+#frame {
+    border: round $border;
+    border-title-color: $dim;
+    border-title-align: left;
+    padding: 0 1;
+    height: 1fr;
+}
+
+#body {
+    height: 1fr;
+    scrollbar-size-vertical: 1;
+    scrollbar-background: $surface;
+    scrollbar-color: #3f3f46;
+    scrollbar-color-hover: $dim;
+}
+
+Splash {
+    height: auto;
+    padding: 2 0 0 0;
+}
+
+#splash-body {
+    height: auto;
+}
+
+ChatTurn {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+ChatTurn.user {
+    color: $accent;
+    padding: 0 0 0 0;
+}
+
+ChatTurn.assistant {
+    color: $fg;
+}
+
+ChatTurn.notice {
+    color: $dim;
+}
+
+ChatTurn.error {
+    color: #f87171;
+}
+
+#contextbar {
+    height: 1;
+    color: $dim;
+    background: $surface;
+}
+
+#contextbar.pinned {
+    color: $cyan;
+}
+
+#contextbar.off {
+    color: #52525b;
+}
+
+#promptbar {
+    height: auto;
+    max-height: 8;
+    width: 1fr;
+    border: none;
+    background: $surface;
+    color: $fg;
+    padding: 0;
+    scrollbar-size-vertical: 1;
+}
+
+#promptbar:focus {
+    border: none;
+}
+
+#promptbar > .text-area--cursor-line {
+    background: $surface;
+}
+
+/* --- server launch modal --- */
+
+LaunchScreen {
+    align: center middle;
+    background: $surface;
+}
+
+/* The one thing that stays opaque. With the screen transparent there is no
+   scrim to dim what is behind the dialog, so without its own background the
+   conversation reads straight through the text. */
+#launch-box {
+    width: 72;
+    max-width: 96%;
+    height: auto;
+    border: round $accent;
+    border-title-color: $accent;
+    border-title-align: left;
+    background: $bg;
+    padding: 1 2;
+}
+
+#launch-msg {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+#launch-cmd {
+    height: auto;
+    color: $dim;
+    margin: 0 0 1 0;
+}
+
+#launch-buttons {
+    height: auto;
+    align: right middle;
+}
+
+#launch-buttons Button {
+    margin: 0 0 0 1;
+    min-width: 9;
+    border: none;
+    height: 1;
+    background: #27272a;
+    color: $fg;
+}
+
+#launch-buttons Button.-primary {
+    background: $accent;
+    color: #09090b;
+}
+
+#launch-buttons Button:focus {
+    text-style: bold reverse;
+}
+
+/* --- prompt row --- */
+
+#promptrow {
+    height: auto;
+    background: $surface;
+}
+
+#promptmark {
+    width: 2;
+    height: 1;
+    color: $accent;
+    background: $surface;
+}
+
+/* --- status bar: meter is sized to content, hints take what's left --- */
+
+StatusBar {
+    height: 1;
+    background: $surface;
+}
+
+#hints {
+    width: 1fr;
+    height: 1;
+    color: $dim;
+    text-overflow: ellipsis;
+}
+
+#meter {
+    width: auto;
+    height: 1;
+    text-align: right;
+}

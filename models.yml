@@ -1,0 +1,81 @@
+providers:
+  llamacpp:
+    baseUrl: http://localhost:8080/v1
+    auth: none
+    api: openai-responses
+    # The DIRECTORY your .gguf files live in — not a file. `ask` joins this
+    # with the model's `id` below to find the weights.
+    modelDir: /path/to/your/GGUFs
+    models:
+        # `id` is the filename inside modelDir, including the .gguf extension.
+      - id: Your-Model-Q4_K_M.gguf
+        # `name` is what you'd like to see on screen and pass to `ask --model`.
+        name: your-model
+        reasoning: false
+        input:
+          - text
+        contextWindow: 8192
+        maxTokens: 8192
+        launchArgs:
+          - "--port"
+          - "8080"
+          - "--ctx-size"
+          - "8192"
+          - "--n-gpu-layers"
+          - "99"
+          - "--parallel"
+          - "1"
+          - "--flash-attn"
+          - "on"
+          - "--batch-size"
+          - "2048"
+          - "--ubatch-size"
+          - "2048"
+          - "--cache-type-k"
+          - "q8_0"
+          - "--cache-type-v"
+          - "q8_0"
+          - "--temp"
+          - "0.7"
+          - "--dry-multiplier"
+          - "0.8"
+          - "--dry-allowed-length"
+          - "2"
+          - "--dry-base"
+          - "1.75"
+          - "--samplers"
+          - "top_k;top_p;min_p;temperature;dry;typ_p;xtc"
+
+# ---------------------------------------------------------------------------
+# Settings for `ask` (the TUI). omp does not read this key.
+# Everything here is optional — uncomment what you want to change.
+# ---------------------------------------------------------------------------
+# ask:
+#   model: your-model      # matches `name` above
+#
+#   # Replace the built-in system prompt. `/system` shows the active one.
+#   # Use systemPromptFile instead to keep it in its own file.
+#   systemPrompt: |
+#     You are a terminal assistant running in a tmux pane.
+#     Lead with the answer. Prefer a command over prose.
+#     Put every command in its own fenced block.
+#   # systemPromptFile: ~/.config/ask/system.md
+#
+#   context:
+#     enabled: true
+#     lines: 40        # scrollback lines taken from each pane
+#     maxPanes: 4
+#     scope: window    # window | session | all
+#     maxTokens: 2000  # cap on the whole pane block
+#
+#   server:
+#     autoOfferLaunch: true
+#     keepAlive: false # leave llama-server running after ask exits
+#
+#   ui:
+#     # Let the terminal's own background show through (Ghostty translucency,
+#     # blur, a background image). Set false — or run `ask --opaque` — if you
+#     # use a light terminal, where the light foregrounds become unreadable.
+#     transparent: true
+#
+#   replyReserve: 1024 # tokens held back for the reply

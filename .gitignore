@@ -1,0 +1,43 @@
+# --- your own config -------------------------------------------------------
+# models.yml is committed as a generic template. These are the personal copies:
+# real model paths, real directory names, anything you don't want on GitHub.
+models_bak.yml
+models.local.yml
+*.local.yml
+system.md
+
+# --- python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.Python
+
+# --- virtualenvs -----------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# --- tooling caches --------------------------------------------------------
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- editors / OS ----------------------------------------------------------
+.DS_Store
+.idea/
+*.swp
+*.swo
+.vscode/*
+!.vscode/settings.json
+
+# --- runtime ---------------------------------------------------------------
+# ask writes llama-server output here; it lives outside the repo, but keep the
+# pattern in case anyone points the log somewhere local.
+*.log
