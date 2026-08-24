@@ -183,3 +183,29 @@ StatusBar {
     height: 1;
     text-align: right;
 }
+
+/* --- model picker inside the launch dialog --- */
+
+#launch-models {
+    height: auto;
+    max-height: 8;
+    margin: 0 0 1 0;
+    background: $surface;
+    border: none;
+    scrollbar-size-vertical: 1;
+}
+
+#launch-models > .option-list--option-highlighted {
+    background: #27272a;
+    color: $fg;
+}
+
+#launch-single {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+#launch-cmd {
+    height: auto;
+    margin: 0 0 1 0;
+}

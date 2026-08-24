@@ -62,8 +62,15 @@ class LlamaClient:
         client: httpx.AsyncClient,
         messages: list[Message],
         max_tokens: int,
-    ) -> AsyncIterator[str]:
-        """Yield content deltas as they arrive."""
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Yield ("reasoning" | "content", text) as deltas arrive.
+
+        A thinking model sends its scratch work as `reasoning_content`, a field
+        beside `content` rather than inside it. Reading only `content` — which
+        this used to do — meant every reasoning token was dropped on the floor,
+        so a model that thought for twenty seconds produced twenty seconds of
+        nothing and looked like a dead connection.
+        """
         payload = {
             "model": self.model_id,
             "messages": [m.as_dict() for m in messages],
@@ -94,9 +101,12 @@ class LlamaClient:
                     if not choices:
                         continue
                     delta = choices[0].get("delta") or {}
+                    thinking = delta.get("reasoning_content")
+                    if thinking:
+                        yield ("reasoning", thinking)
                     piece = delta.get("content")
                     if piece:
-                        yield piece
+                        yield ("content", piece)
         except httpx.ConnectError as exc:
             raise ChatError(
                 f"could not reach llama-server at {self.base_url} — is it running?"

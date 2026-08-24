@@ -67,6 +67,38 @@ $EDITOR ~/.config/ask/models.yml
 Set `modelDir` to the folder holding your `.gguf` files and `id` to the filename
 inside it. Then run `ask` — if no server is listening it will offer to start one.
 
+### Models in more than one place
+
+`id` is a path *relative to* `modelDir`, so a model in a subfolder needs nothing
+special. For one that lives somewhere else entirely, give it a `path`:
+
+```yaml
+models:
+  - id: Qwen3-4B-Instruct-2507.gguf          # directly in modelDir
+    name: qwen3-4b
+
+  - id: Qwen3.5-4B/Qwen3.5-4B-Q6_K.gguf      # a subfolder of modelDir
+    name: qwen3.5-4b
+
+  - id: big.gguf                             # anywhere on disk
+    name: big
+    path: /Volumes/External/Models/big-Q4_K_M.gguf
+```
+
+`path` may be absolute, start with `~`, or be relative to `modelDir`. It is kept
+separate from `id` because `id` is also what gets sent to the server as the model
+name, and a filesystem path is a poor thing to put in an API field.
+
+Pick between them with `ask --model qwen3.5-4b`, or set `ask.model` in the
+config. Without either, the first entry wins.
+
+Once running, `/models` lists them and `/model <name>` switches — `ask` stops the
+llama-server it started and brings the new model up in its place. Your
+conversation is kept across the switch (`^L` clears it if you'd rather start
+fresh). A server `ask` did not start is left alone: its weights are already
+loaded, so `ask` tells you to relaunch rather than let the UI claim one model
+while the answers come from another.
+
 ## Use
 
 ```bash
@@ -127,7 +159,10 @@ everything and `/pane <target>` attaches one.
 | `/context <n>` | lines to take from each pane |
 | `/context` | show the exact block that would be sent |
 | `/clear` | forget the conversation |
+| `/models` | list the models in your config, active one marked |
+| `/model <name>` | switch models without restarting |
 | `/model` | model, endpoint, config path |
+| `/think` | the reasoning behind the last reply |
 | `/system` | the active system prompt |
 | `/help`, `/quit` | |
 
@@ -187,12 +222,37 @@ false`) paints the dark surface back in.
 
 ## The server
 
-On startup `ask` probes the configured `baseUrl`. If nothing answers it shows
-you the exact `llama-server` command it would run — built from `modelDir` and
-`launchArgs` in `models.yml` — and waits for you to choose. It never spawns a
+On startup `ask` probes the configured `baseUrl`. If nothing answers, it lists
+the models in your config and waits for you to pick one — arrows to move, enter
+to start it. The model you choose is the one that gets loaded, so you never pay
+to load one model and then swap to another. A model whose file has moved is
+shown as `missing` rather than failing a minute into a load.
+
+With only one model configured there is nothing to choose, so it just offers to
+start it. It never spawns a
 model behind your back. A server `ask` started is shut down when `ask` exits,
 unless `keepAlive` is set. Its output goes to
 `~/.local/state/ask/llama-server.log`.
+
+## Thinking models
+
+llama.cpp sends a reasoning model's scratch work as `reasoning_content`, a field
+separate from the answer. `ask` reads it and shows a live counter while it runs,
+so a model that thinks for twenty seconds doesn't look like a dead connection:
+
+```
+⋯ thinking… 4.7s          while it works
+⋯ thought for 6.2s        once the answer starts
+```
+
+`/think` prints the reasoning behind the last reply. It is kept out of the
+transcript by default — it's long, it isn't the answer, and it is **never** sent
+back to the model, so thinking from one turn cannot eat the context window on
+the next.
+
+Detection is automatic. The `reasoning:` key in `models.yml` is informational
+only — whether a model thinks is decided by its chat template and llama.cpp, not
+by that flag — and `/model` reports what it says.
 
 ## Context budget
 

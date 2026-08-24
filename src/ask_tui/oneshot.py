@@ -32,9 +32,17 @@ async def run(cfg: Config, prompt: str, pinned_pane: str | None = None) -> int:
         snap = sess.snapshot()
         messages, _ = sess.build_messages(prompt, snap)
         try:
-            async for piece in sess.client.stream(
+            thought = False
+            async for kind, piece in sess.client.stream(
                 http, messages, sess.reply_tokens()
             ):
+                if kind == "reasoning":
+                    # To stderr, so `ask "..." > file` still captures the answer
+                    # alone while the terminal shows the model is alive.
+                    if not thought:
+                        thought = True
+                        print("(thinking…)", file=sys.stderr, flush=True)
+                    continue
                 sys.stdout.write(piece)
                 sys.stdout.flush()
         except ChatError as exc:

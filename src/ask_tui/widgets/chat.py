@@ -7,6 +7,8 @@ repaints on a timer instead.
 
 from __future__ import annotations
 
+from time import monotonic
+
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown
 from rich.text import Text
@@ -24,6 +26,15 @@ class ChatTurn(Static):
     def __init__(self, role: str, content: str = "", **kwargs) -> None:
         self.role = role
         self._raw = content
+        # INVARIANT: every attribute `_build` reads is initialised here, on the
+        # base class — not on AssistantTurn. `_build` is shared by both, so a
+        # subclass-only attribute crashes any plain ChatTurn that renders, which
+        # is every `/help`, `/model`, `/models`, `/think` and error notice.
+        # This has broken twice; add new render state here, never below.
+        self._note = ""
+        self._reasoning = ""
+        self._think_started: float | None = None
+        self._think_seconds: float | None = None
         super().__init__(**kwargs)
         self.add_class(role)
 
@@ -34,21 +45,27 @@ class ChatTurn(Static):
     def raw(self) -> str:
         return self._raw
 
+    def _think_line(self) -> Text | None:
+        if self._think_started is None:
+            return None
+        if self._think_seconds is None:
+            elapsed = monotonic() - self._think_started
+            return Text(f"⋯ thinking… {elapsed:.1f}s", style="#7c7c86")
+        return Text(f"⋯ thought for {self._think_seconds:.1f}s", style="#52525b")
+
     def _build(self) -> RenderableType:
         if self.role == "user":
             return Text(f"❯ {self._raw}", style="#c07dff")
         if self.role in ("notice", "error"):
             return Text(self._raw)
+        think = self._think_line()
         if not self._raw:
-            return Text("…", style="#52525b") if not self._note else Text(
-                self._note, style="#52525b"
-            )
+            if think is not None:
+                return think
+            return Text(self._note or "…", style="#52525b")
         body = Markdown(self._raw, code_theme="ansi_dark", inline_code_theme="ansi_dark")
-        if not self._note:
-            return body
-        return Group(body, Text(self._note, style="#52525b"))
-
-
+        parts = [p for p in (think, body, Text(self._note, style="#52525b") if self._note else None) if p is not None]
+        return parts[0] if len(parts) == 1 else Group(*parts)
 
     def set_content(self, content: str) -> None:
         self._raw = content
@@ -75,9 +92,33 @@ class AssistantTurn(ChatTurn):
     def feed(self, piece: str) -> None:
         self._pending += piece
 
+    @property
+    def reasoning(self) -> str:
+        return self._reasoning
+
+    @property
+    def thought_seconds(self) -> float | None:
+        return self._think_seconds
+
+    def feed_reasoning(self, piece: str) -> None:
+        """Scratch work from a thinking model."""
+        if self._think_started is None:
+            self._think_started = monotonic()
+        self._reasoning += piece
+
+    def _stop_thinking(self) -> None:
+        if self._think_started is not None and self._think_seconds is None:
+            self._think_seconds = monotonic() - self._think_started
+
     def _flush(self) -> None:
+        # Repaint while thinking too, so the elapsed counter ticks even before a
+        # single token of the answer exists.
         if not self._pending:
+            if self._think_started is not None and self._think_seconds is None:
+                self.update(self._build())
             return
+        # The first real token is where thinking ended.
+        self._stop_thinking()
         self._raw += self._pending
         self._pending = ""
         self.update(self._build())
@@ -89,6 +130,7 @@ class AssistantTurn(ChatTurn):
             self._timer.stop()
             self._timer = None
         self._flush()
+        self._stop_thinking()
         self._cancelled = cancelled
         if cancelled and not self._note:
             self._note = "*(stopped)*"

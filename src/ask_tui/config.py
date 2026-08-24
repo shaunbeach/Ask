@@ -27,6 +27,17 @@ class ConfigError(Exception):
 class Model:
     id: str
     name: str
+    #: Where the weights actually are, when they are not in the provider's
+    #: `modelDir`. Absolute (or `~`-relative) points anywhere on disk; a plain
+    #: relative path is taken from `modelDir`. Kept separate from `id` because
+    #: `id` is also what gets sent to the server as the model name, and a
+    #: filesystem path is a poor thing to put in an API field.
+    path: str | None = None
+    #: Informational. Whether a model thinks is decided by its chat template and
+    #: llama.cpp, not by this flag — `ask` detects reasoning from the stream
+    #: either way. Parsed so the key in models.yml is reported rather than
+    #: silently ignored, and shown by `/model`.
+    reasoning: bool = False
     context_window: int = 8192
     max_tokens: int = 2048
     launch_args: list[str] = field(default_factory=list)
@@ -82,10 +93,23 @@ class Config:
 
     @property
     def model_path(self) -> Path | None:
-        """Absolute path to the GGUF, if the provider declares a modelDir."""
+        """Where the weights are on disk, or None if there is no way to tell.
+
+        Resolution order, which lets models live outside `modelDir` without
+        needing a second provider:
+
+        * `path` if the entry sets one, otherwise `id`
+        * `~` expanded — pathlib does not do this, and joining an unexpanded
+          `~/x` onto `modelDir` silently produced `<modelDir>/~/x`
+        * absolute wins outright; relative is taken from `modelDir`
+        """
+        raw = self.model.path or self.model.id
+        candidate = Path(raw).expanduser()
+        if candidate.is_absolute():
+            return candidate
         if self.provider.model_dir is None:
             return None
-        return self.provider.model_dir / self.model.id
+        return self.provider.model_dir / candidate
 
 
 def find_config(explicit: str | Path | None = None) -> Path:
@@ -115,6 +139,8 @@ def _parse_model(raw: dict) -> Model:
     return Model(
         id=model_id,
         name=raw.get("name") or model_id,
+        path=raw.get("path"),
+        reasoning=bool(raw.get("reasoning", False)),
         context_window=int(raw.get("contextWindow", 8192)),
         max_tokens=int(raw.get("maxTokens", 2048)),
         launch_args=[str(a) for a in raw.get("launchArgs", [])],

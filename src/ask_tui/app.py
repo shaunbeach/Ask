@@ -12,12 +12,12 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static
 
 from . import __version__, tmux
-from .client import ChatError
-from .config import Config
+from .client import ChatError, LlamaClient
+from .config import Config, ConfigError, Model, load
 from .context import Snapshot
 from .launch_screen import LaunchScreen
 from .server import ManagedServer, plan, preflight
-from .session import Session
+from .session import Budget, Session
 from .widgets.bars import ContextBar, StatusBar
 from .widgets.chat import AssistantTurn, ChatTurn
 from .widgets.prompt import PromptArea
@@ -37,7 +37,10 @@ automatically; the bar above the input shows exactly what's attached.
 | `/context on\\|off` | toggle pane context entirely |
 | `/context <n>` | lines to take from each pane |
 | `/clear` | forget the conversation |
+| `/models` | list the models in your config |
+| `/model <name>` | switch to one — the conversation is kept |
 | `/model` | show the model and where it came from |
+| `/think` | show the reasoning behind the last reply |
 | `/system` | show the active system prompt |
 | `/help` | this |
 | `/quit` | leave |
@@ -130,15 +133,24 @@ class AskApp(App[None]):
             self.notice("No llama-server answering. Start one, then send a message.", error=True)
             return
 
-        blocker = preflight(self.cfg)
-        launch = plan(self.cfg)
-        choice = await self.push_screen_wait(LaunchScreen(self.cfg, launch, blocker))
+        choice = await self.push_screen_wait(LaunchScreen(self.cfg))
 
-        if choice == "quit":
+        if choice.action == "quit":
             self.exit()
             return
-        if choice == "connect" or launch is None or blocker:
+        if choice.action == "connect" or choice.model is None:
             self.notice("Not connected — send a message once a server is up.", error=True)
+            return
+
+        # The dialog is where the model is chosen, so honour it before building
+        # the launch command. Starting the first entry and making the user swap
+        # afterwards meant loading two models to end up with one.
+        self.adopt_model(choice.model)
+
+        blocker = preflight(self.cfg)
+        launch = plan(self.cfg)
+        if blocker or launch is None:
+            self.notice(f"Can't start `{self.cfg.model.name}`: {blocker or 'no launch command'}", error=True)
             return
 
         # Progress goes in the frame's title, not the log. Loading a model takes
@@ -176,6 +188,20 @@ class AskApp(App[None]):
                 error=True,
             )
 
+    def adopt_model(self, model: Model) -> None:
+        """Point the app and session at `model`, leaving the conversation alone.
+
+        Shared by the startup picker and `/model`, so the two cannot drift on
+        what a switch has to update — the id in the request, the window the
+        budget measures against, and the name on the splash.
+        """
+        self.cfg.model = model
+        self.session.cfg = self.cfg
+        self.session.client = LlamaClient(self.cfg.provider.base_url, model.id)
+        self.session.budget = Budget(window=model.context_window)
+        for splash in self.query(Splash):
+            splash.refresh_labels(model.name, self.cfg.provider.key)
+
     def set_status(self, text: str | None) -> None:
         """Show transient progress in the frame's border title, or clear it."""
         base = f"ask v{__version__}"
@@ -191,8 +217,14 @@ class AskApp(App[None]):
         name = await self.session.client.server_model_name(self._http)
         if not name:
             return
+        # Only relabel when the server really is serving something else. The id
+        # may carry a subfolder (`Qwen3.5-4B/Qwen3.5-4B-Q6_K.gguf`) while the
+        # server reports a bare filename, and comparing the two whole made every
+        # subfoldered model look like a mismatch — replacing the friendly name
+        # on the splash with a raw `.gguf`.
         short = name.rsplit("/", 1)[-1]
-        if short and short != self.cfg.model.id:
+        expected = self.cfg.model.id.rsplit("/", 1)[-1]
+        if short and short != expected:
             for splash in self.query(Splash):
                 splash.refresh_labels(short, self.cfg.provider.key)
 
@@ -224,6 +256,15 @@ class AskApp(App[None]):
         # Status, not conversation: shown under the welcome screen, not instead
         # of it.
         self.append(ChatTurn("error" if error else "notice", text), replaces_splash=False)
+
+    def divider(self, text: str) -> None:
+        """A marker in the transcript that the conversation itself never sees.
+
+        Recorded nowhere: `session.history` holds only what the user and the
+        model wrote, so a note about swapping models cannot be mistaken by the
+        next model for something it said.
+        """
+        self.append(ChatTurn("notice", f"── {text} ──"), replaces_splash=False)
 
     def markdown(self, text: str) -> None:
         turn = ChatTurn("assistant", text)
@@ -312,10 +353,13 @@ class AskApp(App[None]):
         error: ChatError | None = None
 
         try:
-            async for piece in self.session.client.stream(
+            async for kind, piece in self.session.client.stream(
                 self._http, messages, self.session.reply_tokens()
             ):
-                turn.feed(piece)
+                if kind == "reasoning":
+                    turn.feed_reasoning(piece)
+                else:
+                    turn.feed(piece)
         except asyncio.CancelledError:
             cancelled = True
             raise
@@ -347,6 +391,92 @@ class AskApp(App[None]):
         await self.session.refresh_budget(self._http, messages)
         self.refresh_status()
 
+    @work(exclusive=True, group="chat")
+    async def switch_model(self, wanted: str) -> None:
+        """Point the session at a different model from the config.
+
+        The conversation is kept. Clearing it on a switch would silently discard
+        a thread the user may still want, and `^L` is one keystroke away if the
+        handover muddies things — reversible beats tidy.
+        """
+        if self._streaming:
+            self.notice("Still answering — press esc first.")
+            return
+
+        fresh = self._reload()
+        if fresh is None:
+            return
+        match = next(
+            (m for m in fresh.provider.models if wanted in (m.name, m.id)), None
+        )
+        if match is None:
+            names = ", ".join(f"`{m.name}`" for m in fresh.provider.models)
+            self.notice(f"No model called `{wanted}`. Have: {names}", error=True)
+            return
+        if match.name == self.cfg.model.name:
+            self.notice(f"Already using `{match.name}`.")
+            return
+
+        # A server this app did not start belongs to someone else, and its
+        # weights are already loaded. Switching the config while it keeps serving
+        # the old model would make the UI say one thing and the answers be
+        # another — worse than refusing.
+        assert self._http is not None
+        foreign = not self.managed.running and await self.session.client.health(self._http)
+        if foreign:
+            self.notice(
+                f"The server at {self.cfg.provider.base_url} wasn't started by ask, "
+                f"so its model can't be swapped from here.\n\n"
+                f"Stop it and run `ask --model {match.name}`, or set "
+                f"`ask.model: {match.name}` in your config.",
+                error=True,
+            )
+            return
+
+        previous = self.cfg.model.name
+        self.cfg = fresh
+        self.adopt_model(match)
+
+        blocker = preflight(fresh)
+        if blocker:
+            self.notice(f"Switched to `{match.name}`, but it can't be launched: {blocker}", error=True)
+            return
+
+        launch = plan(fresh)
+        if launch is None:
+            self.notice(f"Switched to `{match.name}`, but no launch command could be built.", error=True)
+            return
+
+        self.set_status(f"loading {match.name}…")
+        self._connected = False
+        try:
+            # Stops the old server first — `ManagedServer.start` replaces what it
+            # is holding, and two models resident at once is what makes a load
+            # crawl on a machine that cannot fit both.
+            self.managed.stop()
+            self.managed.start(launch)
+            ready = await self.managed.wait_until_ready(
+                self._http, fresh.provider.base_url, fresh.server.startup_timeout
+            )
+        except OSError as exc:
+            self.notice(f"Couldn't start `{match.name}`: {exc}", error=True)
+            return
+        finally:
+            self.set_status(None)
+
+        if ready:
+            self._connected = True
+            self.divider(f"{previous} → {match.name}")
+            self.refresh_bars()
+        else:
+            tail = self.managed.tail_log(12)
+            detail = f"\n\n```\n{tail}\n```" if tail else ""
+            self.notice(
+                f"`{match.name}` didn't come up in time.{detail}\n\n"
+                f"Full output: `{self.managed.log_path}`",
+                error=True,
+            )
+
     # ---------- slash commands ----------
 
     def run_command(self, line: str) -> None:
@@ -365,6 +495,8 @@ class AskApp(App[None]):
             "pane": self.cmd_pane,
             "context": self.cmd_context,
             "model": self.cmd_model,
+            "models": self.cmd_models,
+            "think": self.cmd_think,
             "system": self.cmd_system,
             "quit": lambda _: self.exit(),
             "exit": lambda _: self.exit(),
@@ -421,7 +553,30 @@ class AskApp(App[None]):
             return
         self.markdown(f"**{snap.summary()}**\n\n```\n{block}\n```")
 
-    def cmd_model(self, _: str) -> None:
+    def _reload(self) -> Config | None:
+        """Re-read models.yml so a config edited since launch is picked up."""
+        try:
+            return load(self.cfg.source, provider_key=self.cfg.provider.key)
+        except ConfigError as exc:
+            self.notice(f"Could not re-read the config: {exc}", error=True)
+            return None
+
+    def cmd_models(self, _: str) -> None:
+        fresh = self._reload() or self.cfg
+        rows = []
+        for m in fresh.provider.models:
+            active = "●" if m.name == self.cfg.model.name else " "
+            rows.append(f"| {active} | `{m.name}` | `{m.id}` | {m.context_window} |")
+        body = "\n".join(rows)
+        self.markdown(
+            f"| | model | file | context |\n|---|---|---|---|\n{body}\n\n"
+            f"`/model <name>` to switch."
+        )
+
+    def cmd_model(self, arg: str) -> None:
+        if arg:
+            self.switch_model(arg.strip())
+            return
         c = self.cfg
         self.markdown(
             f"| | |\n|---|---|\n"
@@ -429,8 +584,25 @@ class AskApp(App[None]):
             f"| file | `{c.model.id}` |\n"
             f"| endpoint | `{c.provider.base_url}` |\n"
             f"| context | {c.model.context_window} tokens |\n"
-            f"| config | `{c.source}` |"
+            f"| reasoning | {'yes' if c.model.reasoning else 'no'} (per models.yml) |\n"
+            f"| config | `{c.source}` |\n\n"
+            f"`/models` lists the rest."
         )
+
+    def cmd_think(self, _: str) -> None:
+        """Show the scratch work behind the most recent reply.
+
+        Kept out of the transcript by default: it is long, it is not the answer,
+        and it is never sent back to the model — but it is the thing you want
+        when a reply looks like it came from nowhere.
+        """
+        turns = [t for t in self.query(AssistantTurn) if t.reasoning]
+        if not turns:
+            self.notice("No reasoning recorded — the last reply didn't think, or none has run yet.")
+            return
+        last = turns[-1]
+        took = f" ({last.thought_seconds:.1f}s)" if last.thought_seconds else ""
+        self.markdown(f"**Reasoning behind the last reply{took}**\n\n```\n{last.reasoning}\n```")
 
     def cmd_system(self, _: str) -> None:
         origin = "models.yml" if self.cfg.system_prompt else "built-in default"
