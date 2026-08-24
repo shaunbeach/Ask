@@ -1,8 +1,22 @@
 # --- your own config -------------------------------------------------------
-# models.yml is committed as a generic template. These are the personal copies:
-# real model paths, real directory names, anything you don't want on GitHub.
+# A generic models.yml is already committed on GitHub as the template others
+# copy. Your local one holds real paths, so git is told to stop watching it:
+#
+#     git update-index --skip-worktree models.yml
+#
+# That keeps the template in the repo while local edits never show up in
+# `git status` and cannot be staged, even by `git add -A`. It is a per-clone
+# flag, not part of the repo, so it does not travel and has to be set again on a
+# fresh clone. To undo:  git update-index --no-skip-worktree models.yml
+# To check:              git ls-files -v models.yml   ("S" means it is set)
+#
+# The `models.yml` line below does nothing while the file is tracked — .gitignore
+# only ever applies to untracked files — but it is kept so the file stays ignored
+# if it is ever removed from the repo.
 models_bak.yml
 models.local.yml
+models.yml
+models_generic.yml
 *.local.yml
 system.md
 

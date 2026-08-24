@@ -141,24 +141,49 @@ class AskApp(App[None]):
             self.notice("Not connected — send a message once a server is up.", error=True)
             return
 
-        self.notice(f"Starting llama-server… (log: {launch.log_path})")
+        # Progress goes in the frame's title, not the log. Loading a model takes
+        # the better part of a minute and the wait needs *something* on screen,
+        # but a log line carrying an absolute path wraps over three lines in a
+        # narrow pane and then sits there permanently, pushing the welcome screen
+        # up. The title is one line, always visible, and cleans up after itself.
+        self.set_status("starting llama-server…")
         try:
             self.managed.start(launch)
         except OSError as exc:
+            self.set_status(None)
             self.notice(f"Couldn't start llama-server: {exc}", error=True)
             return
 
-        ready = await self.managed.wait_until_ready(
-            self._http, self.cfg.provider.base_url, self.cfg.server.startup_timeout
-        )
+        try:
+            ready = await self.managed.wait_until_ready(
+                self._http, self.cfg.provider.base_url, self.cfg.server.startup_timeout
+            )
+        finally:
+            self.set_status(None)
+
         if ready:
             self._connected = True
             await self._adopt_server_model()
             self.notice(f"Connected to {self.cfg.provider.base_url}")
         else:
+            # The path earns its place here: this is the one moment someone needs
+            # to go and read the log.
             tail = self.managed.tail_log(12)
             detail = f"\n\n```\n{tail}\n```" if tail else ""
-            self.notice(f"llama-server didn't come up in time.{detail}", error=True)
+            self.notice(
+                f"llama-server didn't come up in time.{detail}\n\n"
+                f"Full output: `{self.managed.log_path or launch.log_path}`",
+                error=True,
+            )
+
+    def set_status(self, text: str | None) -> None:
+        """Show transient progress in the frame's border title, or clear it."""
+        base = f"ask v{__version__}"
+        try:
+            frame = self.query_one("#frame", Vertical)
+        except Exception:  # noqa: BLE001 - cosmetic; never worth failing a launch
+            return
+        frame.border_title = f"{base} · {text}" if text else base
 
     async def _adopt_server_model(self) -> None:
         """Show whatever the server actually has loaded, not just what we asked for."""
