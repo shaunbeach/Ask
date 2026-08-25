@@ -17,9 +17,11 @@ from pathlib import Path
 
 import httpx
 
-from .config import Config
+from .config import Config, xdg_dir
 
-LOG_DIR = Path.home() / ".local" / "state" / "ask"
+# Honours $XDG_STATE_HOME where it is set; the fallback is the spec's default
+# and what macOS ends up using.
+LOG_DIR = xdg_dir("XDG_STATE_HOME", ".local/state") / "ask"
 
 
 def binary() -> str | None:

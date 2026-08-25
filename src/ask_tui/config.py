@@ -12,9 +12,21 @@ from pathlib import Path
 
 import yaml
 
+def xdg_dir(var: str, fallback: str) -> Path:
+    """An XDG base directory, honouring the environment variable if it is set.
+
+    The fallbacks are what the spec prescribes and what macOS users get anyway,
+    so this changes nothing there — but plenty of Linux setups relocate these,
+    and writing to a hardcoded `~/.config` on such a machine puts files where
+    the user did not ask for them.
+    """
+    value = os.environ.get(var)
+    return Path(value).expanduser() if value else Path.home() / fallback
+
+
 CONFIG_CANDIDATES = (
     Path("models.yml"),
-    Path.home() / ".config" / "ask" / "models.yml",
+    xdg_dir("XDG_CONFIG_HOME", ".config") / "ask" / "models.yml",
     Path.home() / ".omp" / "models.yml",
 )
 

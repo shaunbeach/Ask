@@ -22,6 +22,17 @@ traceback, a failed build, a directory listing — without copying anything.
 
 ## Requirements
 
+**Linux and macOS.** Everything platform-specific here is POSIX — process groups
+and signals for managing `llama-server`, and tmux for reading panes — so the two
+behave the same. `$XDG_CONFIG_HOME` and `$XDG_STATE_HOME` are honoured where they
+are set, falling back to `~/.config` and `~/.local/state`.
+
+Not Windows: `os.killpg` has no equivalent there and tmux does not run on it.
+WSL works, being Linux.
+
+The interface uses box-drawing and a few symbols (`❯ ━ ╱ ▲ ⋯ ✦`). Any font with
+reasonable Unicode coverage renders them; a strict ASCII-only font will not.
+
 - **Python 3.11+**
 - **[llama.cpp](https://github.com/ggml-org/llama.cpp)** — `llama-server` on your
   `PATH`, and a `.gguf` model
@@ -30,14 +41,124 @@ traceback, a failed build, a directory listing — without copying anything.
 
 ## Install
 
-No clone needed — [uv](https://docs.astral.sh/uv/) installs straight from the
-repo and puts `ask` on your `PATH`:
+### Arch / Omarchy
+
+Omarchy is Arch underneath, so `pacman` handles most of it and `yay` handles
+llama.cpp (which is not in the official repos). Run these in order.
+
+**1. Find out what GPU you have** — it decides which llama.cpp to install:
 
 ```bash
-uv tool install git+https://github.com/YOUR-USER/ask.git
+lspci | grep -Ei 'vga|3d|display'
 ```
 
-`pipx install git+https://github.com/YOUR-USER/ask.git` works the same way.
+**2. Install llama.cpp.** Pick the line matching what step 1 printed:
+
+```bash
+yay -S llama.cpp-cuda      # NVIDIA
+yay -S llama.cpp-vulkan    # a modern AMD or Intel GPU
+yay -S llama.cpp-bin       # no usable GPU, or an old integrated one — see below
+```
+
+The first two compile from source, which takes a while. `llama.cpp-bin` is the
+official prebuilt Linux release, so it just downloads — worth taking on a slow or
+dual-core machine where a source build runs half an hour. All three provide
+`llama-server`, which is the binary `ask` looks for.
+
+**On older integrated graphics, use `llama.cpp-bin` and stay on the CPU.** A
+pre-2018 Intel iGPU (HD 5000/6000 and similar) has too few execution units to
+beat the CPU at this, and the Vulkan path on those chips is old and fiddly. You
+lose nothing by skipping it.
+
+If `yay` isn't installed:
+`sudo pacman -S --needed base-devel git && git clone
+https://aur.archlinux.org/yay.git && cd yay && makepkg -si`
+
+**3. Everything else from the official repos:**
+
+```bash
+sudo pacman -S --needed tmux uv
+```
+
+**4. Install `ask`:**
+
+```bash
+uv tool install git+https://github.com/shaunbeach/Ask.git
+```
+
+If `ask: command not found` afterwards, `~/.local/bin` isn't on your PATH:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+```
+
+**5. Get a model.** Any `.gguf` works. A small one to start with:
+
+```bash
+mkdir -p ~/models
+curl -L --progress-bar -o ~/models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
+  https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+```
+
+That one is 2.3 GB. If you already have models on another machine,
+`rsync -avP ~/Documents/GGUFs/ user@laptop:~/models/` moves them across instead.
+
+**On 8 GB of RAM or an older CPU, start smaller.** A 1.5B model answers in
+seconds where a 4B makes you wait, and the difference matters far more than the
+quality gap for "what does this command do":
+
+```bash
+curl -L --progress-bar -o ~/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
+```
+
+**6. Point `ask` at it:**
+
+```bash
+mkdir -p ~/.config/ask
+curl -fsSL https://raw.githubusercontent.com/shaunbeach/Ask/main/models.yml \
+  -o ~/.config/ask/models.yml
+$EDITOR ~/.config/ask/models.yml
+```
+
+Set `modelDir: ~/models` and `id: Qwen3-4B-Instruct-2507-Q4_K_M.gguf`.
+
+**7. Run it:**
+
+```bash
+tmux            # ask reads your other panes, so start inside tmux
+ask
+```
+
+It will offer to start `llama-server` for you. Split a pane with `ctrl-b %` and
+ask about whatever is in it.
+
+### Debian / Ubuntu / Fedora
+
+```bash
+sudo apt install -y tmux            # or: sudo dnf install -y tmux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env" 2>/dev/null || export PATH="$HOME/.local/bin:$PATH"
+uv tool install git+https://github.com/shaunbeach/Ask.git
+```
+
+There is no llama.cpp package on these, so build it — see
+[llama.cpp](https://github.com/ggml-org/llama.cpp) — or download a release
+binary and put `llama-server` anywhere on your `PATH`. Then follow steps 5–7
+above.
+
+### macOS
+
+```bash
+brew install tmux llama.cpp uv
+uv tool install git+https://github.com/shaunbeach/Ask.git
+```
+
+Then steps 5–7 above.
+
+### Other ways in
+
+`pipx install git+https://github.com/shaunbeach/Ask.git` works instead of uv.
 
 To upgrade later, `uv tool upgrade ask-tui`. To remove it, `uv tool uninstall
 ask-tui`.
@@ -45,27 +166,45 @@ ask-tui`.
 ### Or, to hack on it
 
 ```bash
-git clone https://github.com/YOUR-USER/ask.git
-cd ask
+git clone https://github.com/shaunbeach/Ask.git
+cd Ask
 uv tool install --editable .
 ```
 
 Editable, so your changes take effect without reinstalling.
 
-## Set up a config
+## The config file
 
-`ask` needs a `models.yml` pointing at your model. Copy the one in this repo and
-edit the paths:
+Covered in step 6 above; this is the detail behind it.
 
-```bash
-mkdir -p ~/.config/ask
-curl -fsSL https://raw.githubusercontent.com/YOUR-USER/ask/main/models.yml \
-  -o ~/.config/ask/models.yml
-$EDITOR ~/.config/ask/models.yml
+`modelDir` is the folder holding your `.gguf` files and `id` is the filename
+inside it. `~` works in both, and in `path`.
+
+### launchArgs on a CPU-only machine
+
+The `launchArgs` in the template are tuned for a GPU. On a laptop running on the
+CPU, these are the ones that matter:
+
+```yaml
+      - id: Qwen2.5-1.5B-Instruct-Q4_K_M.gguf
+        name: qwen-1.5b
+        contextWindow: 4096
+        maxTokens: 1024
+        launchArgs:
+          - "--port"
+          - "8080"
+          - "--ctx-size"
+          - "4096"        # KV cache scales with this; 8192 costs real RAM
+          - "--threads"
+          - "4"           # physical cores x2 if the CPU has hyperthreading
+          - "--n-gpu-layers"
+          - "0"           # everything on the CPU
 ```
 
-Set `modelDir` to the folder holding your `.gguf` files and `id` to the filename
-inside it. Then run `ask` — if no server is listening it will offer to start one.
+Leave out `--batch-size`/`--ubatch-size` (the 2048 in the template is a GPU
+setting and wants memory you don't have) and `--flash-attn`/`--cache-type-*`
+(they work on the CPU but buy little there). `nproc` tells you the thread count
+to use.
 
 ### Models in more than one place
 
