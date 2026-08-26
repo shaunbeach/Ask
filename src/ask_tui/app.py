@@ -173,20 +173,12 @@ class AskApp(App[None]):
         finally:
             self.set_status(None)
 
-        if ready:
+        if ready == "ready":
             self._connected = True
             await self._adopt_server_model()
             self.notice(f"Connected to {self.cfg.provider.base_url}")
         else:
-            # The path earns its place here: this is the one moment someone needs
-            # to go and read the log.
-            tail = self.managed.tail_log(12)
-            detail = f"\n\n```\n{tail}\n```" if tail else ""
-            self.notice(
-                f"llama-server didn't come up in time.{detail}\n\n"
-                f"Full output: `{self.managed.log_path or launch.log_path}`",
-                error=True,
-            )
+            self._startup_failed(ready, self.managed.log_path or launch.log_path)
 
     def adopt_model(self, model: Model) -> None:
         """Point the app and session at `model`, leaving the conversation alone.
@@ -201,6 +193,30 @@ class AskApp(App[None]):
         self.session.budget = Budget(window=model.context_window)
         for splash in self.query(Splash):
             splash.refresh_labels(model.name, self.cfg.provider.key)
+
+    def _startup_failed(self, outcome: str, log_path) -> None:
+        """Explain a failed launch in terms of what actually happened.
+
+        "died" and "timeout" need different things from the user. Reporting a
+        crash as a timeout sent someone hunting for a slow disk when the real
+        message — a backend that failed to load — was in the log the whole time.
+        """
+        tail = self.managed.tail_log(12)
+        detail = f"\n\n```\n{tail}\n```" if tail else ""
+        if outcome == "died":
+            code = self.managed.exit_code
+            headline = (
+                "llama-server exited immediately"
+                + (f" (exit code {code})" if code is not None else "")
+                + " — it did not time out, it failed to start."
+            )
+        else:
+            headline = (
+                f"llama-server was still loading after "
+                f"{int(self.cfg.server.startup_timeout)}s. It may simply be slow — "
+                f"raise `server.startupTimeout` in models.yml if the log looks healthy."
+            )
+        self.notice(f"{headline}{detail}\n\nFull output: `{log_path}`", error=True)
 
     def set_status(self, text: str | None) -> None:
         """Show transient progress in the frame's border title, or clear it."""
@@ -464,18 +480,12 @@ class AskApp(App[None]):
         finally:
             self.set_status(None)
 
-        if ready:
+        if ready == "ready":
             self._connected = True
             self.divider(f"{previous} → {match.name}")
             self.refresh_bars()
         else:
-            tail = self.managed.tail_log(12)
-            detail = f"\n\n```\n{tail}\n```" if tail else ""
-            self.notice(
-                f"`{match.name}` didn't come up in time.{detail}\n\n"
-                f"Full output: `{self.managed.log_path}`",
-                error=True,
-            )
+            self._startup_failed(ready, self.managed.log_path)
 
     # ---------- slash commands ----------
 

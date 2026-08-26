@@ -393,6 +393,45 @@ Detection is automatic. The `reasoning:` key in `models.yml` is informational
 only — whether a model thinks is decided by its chat template and llama.cpp, not
 by that flag — and `/model` reports what it says.
 
+## Troubleshooting
+
+### "llama-server exited immediately"
+
+`ask` shows the tail of the server's own log with this. Read that first — it
+usually names the cause outright.
+
+One that catches people on Arch, with the AUR builds:
+
+```
+load_backend: failed to load /usr/lib: Is a directory
+```
+
+`llama-server` loads its compute backend as a shared library, and
+`GGML_BACKEND_PATH` has to point at a specific `.so`, not the directory holding
+them. Find the one matching your CPU and make it permanent:
+
+```bash
+ls /usr/lib/libggml-cpu-*.so
+echo 'export GGML_BACKEND_PATH=/usr/lib/libggml-cpu-haswell.so' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Pick the variant your CPU actually supports — `haswell` covers Broadwell and
+most Intel chips from 2014 on; `sandybridge` for older; `sapphirerapids` and
+friends for recent Xeons. `ask` inherits the environment of the shell it runs
+in, so once it is in `~/.bashrc` there is nothing to configure in `ask` itself.
+
+### "llama-server was still loading after Ns"
+
+Different problem: the process is alive and working, just slow. A large model on
+a CPU-only machine can genuinely take minutes the first time. Raise the limit:
+
+```yaml
+ask:
+  server:
+    startupTimeout: 300
+```
+
 ## Context budget
 
 At an 8192-token window the budget is the whole game, so `ask` accounts for it

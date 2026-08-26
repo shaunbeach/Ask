@@ -112,30 +112,42 @@ class ManagedServer:
     def died(self) -> bool:
         return self._proc is not None and self._proc.poll() is not None
 
+    @property
+    def exit_code(self) -> int | None:
+        """The code the server exited with, if it has."""
+        return None if self._proc is None else self._proc.poll()
+
     async def wait_until_ready(
         self,
         client: httpx.AsyncClient,
         base_url: str,
         timeout: float,
         on_tick=None,
-    ) -> bool:
-        """Poll /models until the model finishes loading."""
+    ) -> str:
+        """Poll /models until the model loads. Returns "ready", "died" or "timeout".
+
+        The three are worth telling apart. A server that exits after two seconds
+        and one that is still loading after two minutes need completely different
+        things from the user, and reporting both as a timeout sent someone
+        hunting for a slow disk when the real message — a backend that failed to
+        load — was sitting in the log the whole time.
+        """
         url = f"{base_url.rstrip('/')}/models"
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while loop.time() < deadline:
             if self.died():
-                return False
+                return "died"
             try:
                 resp = await client.get(url, timeout=2.0)
                 if resp.status_code < 500:
-                    return True
+                    return "ready"
             except httpx.HTTPError:
                 pass
             if on_tick is not None:
                 on_tick(max(0.0, deadline - loop.time()))
             await asyncio.sleep(0.6)
-        return False
+        return "timeout"
 
     def stop(self) -> None:
         """Shut down only if we started it and weren't told to keep it alive."""

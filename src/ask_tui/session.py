@@ -126,11 +126,16 @@ class Session:
             running += cost
         kept.reverse()
 
-        messages = [Message("system", system)]
+        # Folded into the one system message rather than sent as a second
+        # `system`-role message. Whether a second one is accepted is up to the
+        # model's chat template: some merge them, others raise a Jinja exception
+        # ("System message must be at the beginning") and the request fails with
+        # a 500 — which showed up as a mid-session crash the moment pane context
+        # was attached. One system message is the form every template accepts,
+        # and the block is still rebuilt from scratch each turn either way.
         if block:
-            # Context rides as its own system message so it stays visually
-            # separate from the conversation and is trivial to swap each turn.
-            messages.append(Message("system", block))
+            system = f"{system}\n\n{block}"
+        messages = [Message("system", system)]
         for turn in kept:
             messages.append(Message(turn.role, turn.content))
         messages.append(Message("user", prompt))
