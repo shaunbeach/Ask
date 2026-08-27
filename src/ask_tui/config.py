@@ -101,6 +101,10 @@ class Config:
     ui: UiSettings
     system_prompt: str | None
     reply_reserve: int = 1024
+    #: A file needs far more room than a chat reply. Separate from
+    #: `reply_reserve` so a generous default here does not shrink the pane
+    #: context on every ordinary question.
+    write_reserve: int = 4096
     source: Path | None = None
 
     @property
@@ -245,6 +249,7 @@ def load(
         ui=ui,
         system_prompt=_read_system_prompt(ask),
         reply_reserve=int(ask.get("replyReserve", 1024)),
+        write_reserve=int(ask.get("writeReserve", 4096)),
         source=path,
     )
 

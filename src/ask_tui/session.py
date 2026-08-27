@@ -104,13 +104,23 @@ class Session:
         return max(200, min(self.cfg.context.max_tokens, spare // 2))
 
     def build_messages(
-        self, prompt: str, snap: context.Snapshot
+        self,
+        prompt: str,
+        snap: context.Snapshot,
+        system: str | None = None,
+        reserve: int | None = None,
+        history: bool = True,
     ) -> tuple[list[Message], Budget]:
-        """Assemble the request, evicting old turns until it fits."""
-        window = self.cfg.model.context_window
-        reserve = self.cfg.reply_reserve
+        """Assemble the request, evicting old turns until it fits.
 
-        system = self.system_prompt
+        `system` and `reserve` let a command borrow the pipeline with different
+        rules — `/write` needs a prompt that forbids prose and several times the
+        room, without either leaking into ordinary questions.
+        """
+        window = self.cfg.model.context_window
+        reserve = self.cfg.reply_reserve if reserve is None else reserve
+
+        system = self.system_prompt if system is None else system
         block = snap.render()
         system_tokens = estimate(system)
         context_tokens = estimate(block)
@@ -118,7 +128,7 @@ class Session:
         # The current prompt is non-negotiable; older turns are not.
         kept: list[Turn] = []
         running = estimate(prompt)
-        for turn in reversed(self.history):
+        for turn in reversed(self.history if history else []):
             cost = estimate(turn.content) + 4
             if system_tokens + context_tokens + running + cost + reserve > window:
                 break
@@ -183,5 +193,6 @@ class Session:
     def clear(self) -> None:
         self.history.clear()
 
-    def reply_tokens(self) -> int:
-        return min(self.cfg.model.max_tokens, self.cfg.reply_reserve)
+    def reply_tokens(self, reserve: int | None = None) -> int:
+        want = self.cfg.reply_reserve if reserve is None else reserve
+        return min(self.cfg.model.max_tokens, want)

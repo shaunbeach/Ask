@@ -301,6 +301,8 @@ everything and `/pane <target>` attaches one.
 | `/models` | list the models in your config, active one marked |
 | `/model <name>` | switch models without restarting |
 | `/model` | model, endpoint, config path |
+| `/write <file> <what>` | generate a file in the current directory |
+| `/export [name]` | save the conversation as `YYYY-MM-DD-name.md` |
 | `/think` | the reasoning behind the last reply |
 | `/system` | the active system prompt |
 | `/help`, `/quit` | |
@@ -372,6 +374,40 @@ start it. It never spawns a
 model behind your back. A server `ask` started is shut down when `ask` exits,
 unless `keepAlive` is set. Its output goes to
 `~/.local/state/ask/llama-server.log`.
+
+## Writing files
+
+```
+/write backup.sh rsync ~/notes to /mnt/usb, skip .git, with a dry-run flag
+```
+
+Writes the file into the directory you launched `ask` from. The reply is the
+file and nothing else — no preamble, no explanation, no markdown fence — with a
+short comment at the top saying what it does. That is deliberate: an offline
+assistant on a laptop is most useful when it produces something you can run, not
+something you have to read first.
+
+Re-running `/write` on the same name keeps the old version as `<name>.bak`, so
+"do that again but shorter" is safe.
+
+Files get a much larger reply budget than chat answers — 4096 tokens against
+1024, roughly 14 KB of code. Adjust with:
+
+```yaml
+ask:
+  writeReserve: 4096
+```
+
+## Exporting
+
+```
+/export notes        →  2026-08-26-notes.md
+/export              →  2026-08-26-chat.md
+```
+
+The conversation as markdown, in the current directory. Questions become
+headings and answers follow them; reasoning is left out for the same reason it
+never reaches the model.
 
 ## Thinking models
 

@@ -17,6 +17,9 @@ from .config import Config, ConfigError, Model, load
 from .context import Snapshot
 from .launch_screen import LaunchScreen
 from .server import ManagedServer, plan, preflight
+from .files import export_name, render_transcript, strip_fences
+from .files import write_file as write_file_to_disk
+from .prompts import WRITE_SYSTEM_PROMPT
 from .session import Budget, Session
 from .widgets.bars import ContextBar, StatusBar
 from .widgets.chat import AssistantTurn, ChatTurn
@@ -40,6 +43,8 @@ automatically; the bar above the input shows exactly what's attached.
 | `/models` | list the models in your config |
 | `/model <name>` | switch to one — the conversation is kept |
 | `/model` | show the model and where it came from |
+| `/write <file> <what>` | generate a file in the current directory |
+| `/export [name]` | save the conversation as `YYYY-MM-DD-name.md` |
 | `/think` | show the reasoning behind the last reply |
 | `/system` | show the active system prompt |
 | `/help` | this |
@@ -507,6 +512,8 @@ class AskApp(App[None]):
             "model": self.cmd_model,
             "models": self.cmd_models,
             "think": self.cmd_think,
+            "write": self.cmd_write,
+            "export": self.cmd_export,
             "system": self.cmd_system,
             "quit": lambda _: self.exit(),
             "exit": lambda _: self.exit(),
@@ -613,6 +620,103 @@ class AskApp(App[None]):
         last = turns[-1]
         took = f" ({last.thought_seconds:.1f}s)" if last.thought_seconds else ""
         self.markdown(f"**Reasoning behind the last reply{took}**\n\n```\n{last.reasoning}\n```")
+
+    def cmd_write(self, arg: str) -> None:
+        """`/write <filename> <what it should do>`"""
+        name, _, brief = arg.partition(" ")
+        if not name or not brief.strip():
+            self.notice(
+                "Usage: `/write <filename> <what it should do>`\n\n"
+                "e.g. `/write backup.sh rsync ~/notes to /mnt/usb, skipping .git`",
+                error=True,
+            )
+            return
+        if self._streaming:
+            self.notice("Still answering — press esc first.")
+            return
+        self.write_file(name, brief.strip())
+
+    @work(exclusive=True, group="chat")
+    async def write_file(self, name: str, brief: str) -> None:
+        assert self._http is not None
+        if not self._connected and not await self.session.client.health(self._http):
+            self.notice(f"No llama-server at {self.cfg.provider.base_url}.", error=True)
+            return
+        self._connected = True
+
+        self.append(ChatTurn("user", f"/write {name} — {brief}"))
+        snap = self.session.snapshot()
+        messages, _ = self.session.build_messages(
+            f"Filename: {name}\n\nWhat it should do:\n{brief}",
+            snap,
+            system=WRITE_SYSTEM_PROMPT,
+            reserve=self.cfg.write_reserve,
+            # No history: a file is a fresh artefact, and prior chat turns both
+            # crowd out the room it needs and tempt the model back into prose.
+            history=False,
+        )
+
+        turn = AssistantTurn()
+        self.append(turn)
+        turn.start_stream()
+        self._streaming = True
+        cancelled = False
+        try:
+            async for kind, piece in self.session.client.stream(
+                self._http, messages, self.session.reply_tokens(self.cfg.write_reserve)
+            ):
+                if kind == "reasoning":
+                    turn.feed_reasoning(piece)
+                else:
+                    turn.feed(piece)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        except ChatError as exc:
+            self.notice(str(exc), error=True)
+            return
+        finally:
+            self._streaming = False
+            turn.finish(cancelled=cancelled)
+
+        body = strip_fences(turn.raw)
+        if not body.strip():
+            self.notice("The model returned nothing to write.", error=True)
+            return
+        if cancelled:
+            self.notice("Stopped — nothing written.", error=True)
+            return
+
+        try:
+            target = write_file_to_disk(name, body)
+        except OSError as exc:
+            self.notice(f"Couldn't write `{name}`: {exc}", error=True)
+            return
+
+        note = f"Wrote `{target.path}` ({len(body.splitlines())} lines)"
+        if target.backup is not None:
+            note += f"\n\nThe previous version is at `{target.backup.name}`."
+        self.notice(note)
+
+    def cmd_export(self, arg: str) -> None:
+        """`/export [name]` — the conversation as YYYY-MM-DD-<name>.md"""
+        if not self.session.history:
+            self.notice("Nothing to export yet.", error=True)
+            return
+        name = export_name(arg.strip() or "chat")
+        text = render_transcript(
+            self.session.history, self.cfg.model.name, self.cfg.provider.key
+        )
+        try:
+            target = write_file_to_disk(name, text)
+        except OSError as exc:
+            self.notice(f"Couldn't write `{name}`: {exc}", error=True)
+            return
+        turns = len(self.session.history)
+        note = f"Exported {turns} message{'' if turns == 1 else 's'} to `{target.path}`"
+        if target.backup is not None:
+            note += f"\n\nThe previous file is at `{target.backup.name}`."
+        self.notice(note)
 
     def cmd_system(self, _: str) -> None:
         origin = "models.yml" if self.cfg.system_prompt else "built-in default"
