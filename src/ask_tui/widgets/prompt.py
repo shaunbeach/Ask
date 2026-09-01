@@ -15,6 +15,13 @@ from textual.widgets import TextArea
 # Terminals disagree about shift+enter, so offer several ways to get a newline.
 NEWLINE_KEYS = ("shift+enter", "alt+enter", "ctrl+j")
 
+# Copying the last code block. `ctrl+y` would be the conventional "yank",
+# but TextArea binds it to `redo`, so an app-level binding never sees it
+# while the prompt has focus — which is essentially always. `alt+c` is
+# unbound in TextArea, and is intercepted here rather than left to the
+# app's BINDINGS so that the bare character can't leak into the prompt.
+COPY_KEYS = ("alt+c",)
+
 
 class PromptArea(TextArea):
     """A wrapping, auto-growing prompt. Enter sends; alt+enter adds a line."""
@@ -23,6 +30,9 @@ class PromptArea(TextArea):
         def __init__(self, value: str) -> None:
             self.value = value
             super().__init__()
+
+    class CopyRequested(Message):
+        """The copy key, forwarded to the app rather than handled here."""
 
     def __init__(self, placeholder: str = "", **kwargs) -> None:
         super().__init__(soft_wrap=True, compact=True, placeholder=placeholder, **kwargs)
@@ -35,6 +45,11 @@ class PromptArea(TextArea):
             text = self.text.strip()
             if text:
                 self.post_message(self.Submitted(text))
+            return
+        if event.key in COPY_KEYS:
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.CopyRequested())
             return
         if event.key in NEWLINE_KEYS:
             event.prevent_default()

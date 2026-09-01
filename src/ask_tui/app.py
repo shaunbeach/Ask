@@ -12,6 +12,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static
 
 from . import __version__, tmux
+from .clipboard import code_blocks, copy as copy_to_clipboard
 from .client import ChatError, LlamaClient
 from .config import Config, ConfigError, Model, load
 from .context import Snapshot
@@ -46,12 +47,15 @@ automatically; the bar above the input shows exactly what's attached.
 | `/write <file> <what>` | generate a file in the current directory |
 | `/export [name]` | save the conversation as `YYYY-MM-DD-name.md` |
 | `/think` | show the reasoning behind the last reply |
+| `/copy` | copy the last code block to the clipboard |
+| `/copy <n>` | copy the nth code block of the last reply |
+| `/copy all` | copy the whole last reply |
 | `/system` | show the active system prompt |
 | `/help` | this |
 | `/quit` | leave |
 
 **Keys** — `enter` sends, `alt+enter` adds a line, `esc` stops a reply,
-`^L` clears, `^C` quits. Long questions wrap; the box grows as you type.
+`alt+c` copies the last code block, `^L` clears, `^C` quits. Long questions wrap; the box grows as you type.
 """
 
 
@@ -67,6 +71,7 @@ class AskApp(App[None]):
     BINDINGS = [
         ("ctrl+c", "quit", "quit"),
         ("ctrl+l", "clear", "clear"),
+        ("alt+c", "copy", "copy code"),
         ("escape", "stop", "stop"),
     ]
 
@@ -512,6 +517,7 @@ class AskApp(App[None]):
             "model": self.cmd_model,
             "models": self.cmd_models,
             "think": self.cmd_think,
+            "copy": self.cmd_copy,
             "write": self.cmd_write,
             "export": self.cmd_export,
             "system": self.cmd_system,
@@ -620,6 +626,71 @@ class AskApp(App[None]):
         last = turns[-1]
         took = f" ({last.thought_seconds:.1f}s)" if last.thought_seconds else ""
         self.markdown(f"**Reasoning behind the last reply{took}**\n\n```\n{last.reasoning}\n```")
+
+    def _last_reply(self) -> str | None:
+        """Raw markdown of the most recent assistant turn that said anything."""
+        for turn in reversed(list(self.query(AssistantTurn))):
+            if turn.raw.strip():
+                return turn.raw
+        return None
+
+    def _copy(self, text: str, what: str) -> None:
+        ok, detail = copy_to_clipboard(text)
+        self.notice(detail if not ok else f"{what} — {detail}", error=not ok)
+
+    def on_prompt_area_copy_requested(self, _: PromptArea.CopyRequested) -> None:
+        self.action_copy()
+
+    def action_copy(self) -> None:
+        """`^Y` — the last code block, or the whole reply if it had none.
+
+        Falling back to the whole reply rather than erroring: a one-line answer
+        that the model chose not to fence is still the thing you wanted to copy,
+        and being told "no code blocks" when the answer is right there reads as
+        a malfunction.
+        """
+        reply = self._last_reply()
+        if reply is None:
+            self.notice("Nothing to copy yet.")
+            return
+        blocks = code_blocks(reply)
+        if not blocks:
+            self._copy(reply, "Whole reply (no fenced blocks)")
+            return
+        block = blocks[-1]
+        label = f"`{block.summary()}`" if block.summary() else "last block"
+        self._copy(block.body, f"Copied {label}")
+
+    def cmd_copy(self, arg: str) -> None:
+        """`/copy`, `/copy <n>`, `/copy all`"""
+        reply = self._last_reply()
+        if reply is None:
+            self.notice("Nothing to copy yet.")
+            return
+
+        arg = arg.strip().lower()
+        if arg in ("all", "reply"):
+            self._copy(reply, "Whole reply")
+            return
+
+        blocks = code_blocks(reply)
+        if not arg:
+            self.action_copy()
+            return
+        if not blocks:
+            self.notice("That reply had no fenced code blocks. `/copy all` takes the whole thing.", error=True)
+            return
+        if not arg.isdigit():
+            self.notice(f"Usage: `/copy`, `/copy <n>` (1–{len(blocks)}), or `/copy all`.", error=True)
+            return
+
+        n = int(arg)
+        if not 1 <= n <= len(blocks):
+            plural = "" if len(blocks) == 1 else "s"
+            self.notice(f"That reply has {len(blocks)} block{plural}; asked for {n}.", error=True)
+            return
+        block = blocks[n - 1]
+        self._copy(block.body, f"Copied block {n}/{len(blocks)}")
 
     def cmd_write(self, arg: str) -> None:
         """`/write <filename> <what it should do>`"""
