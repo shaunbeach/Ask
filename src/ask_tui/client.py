@@ -113,6 +113,19 @@ class LlamaClient:
             ) from exc
         except httpx.ReadTimeout as exc:
             raise ChatError("llama-server stopped responding mid-reply") from exc
+        except httpx.TransportError as exc:
+            # Everything else the transport can raise: ReadError and
+            # RemoteProtocolError are what a *killed* server looks like from
+            # this end — the socket dies rather than going quiet, so neither of
+            # the two cases above fires. Those escaped as bare exceptions inside
+            # a Textual worker, which bypasses the `except ChatError` handlers in
+            # app.py and surfaces a traceback over the conversation instead of a
+            # notice. Catching the base class means a new httpx transport error
+            # cannot reopen that hole.
+            raise ChatError(
+                f"lost the connection to llama-server ({type(exc).__name__}) — "
+                "it may have been killed or run out of memory"
+            ) from exc
 
 
 def _explain(status: int, body: str) -> str:
